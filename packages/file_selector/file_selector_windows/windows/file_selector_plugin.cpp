@@ -14,7 +14,9 @@
 
 #include <cassert>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "file_dialog_controller.h"
@@ -287,23 +289,108 @@ FileSelectorPlugin::FileSelectorPlugin(
     FlutterRootWindowProvider window_provider,
     std::unique_ptr<FileDialogControllerFactory> dialog_controller_factory)
     : get_root_window_(std::move(window_provider)),
-      controller_factory_(std::move(dialog_controller_factory)) {}
+      controller_factory_(std::move(dialog_controller_factory)),
+      worker_(&FileSelectorPlugin::WorkerLoop, this) {}
 
-FileSelectorPlugin::~FileSelectorPlugin() = default;
-
-ErrorOr<FileDialogResult> FileSelectorPlugin::ShowOpenDialog(
-    const SelectionOptions& options, const std::string* initialDirectory,
-    const std::string* confirmButtonText) {
-  return ShowDialog(*controller_factory_, get_root_window_(), DialogMode::open,
-                    options, initialDirectory, nullptr, confirmButtonText);
+FileSelectorPlugin::~FileSelectorPlugin() {
+  {
+    std::lock_guard<std::mutex> lock(task_mutex_);
+    stopping_ = true;
+    std::queue<Task> empty;
+    tasks_.swap(empty);
+  }
+  task_ready_.notify_one();
+  if (worker_.joinable()) {
+    worker_.join();
+  }
 }
 
-ErrorOr<FileDialogResult> FileSelectorPlugin::ShowSaveDialog(
+void FileSelectorPlugin::ShowOpenDialog(
     const SelectionOptions& options, const std::string* initialDirectory,
-    const std::string* suggestedName, const std::string* confirmButtonText) {
-  return ShowDialog(*controller_factory_, get_root_window_(), DialogMode::save,
-                    options, initialDirectory, suggestedName,
-                    confirmButtonText);
+    const std::string* confirmButtonText,
+    std::function<void(ErrorOr<FileDialogResult> reply)> result) {
+  const HWND parent_window = get_root_window_();
+  const std::optional<std::string> initial_directory =
+      initialDirectory ? std::make_optional(*initialDirectory) : std::nullopt;
+  const std::optional<std::string> confirm_button_text =
+      confirmButtonText ? std::make_optional(*confirmButtonText) : std::nullopt;
+  if (!Enqueue([this, parent_window, options, initial_directory,
+                confirm_button_text, result](HRESULT com_result) {
+        if (FAILED(com_result)) {
+          result(FlutterError(
+              "System error", "Could not initialize the file dialog thread",
+              EncodableValue(std::in_place_type<int32_t>, com_result)));
+          return;
+        }
+        result(ShowDialog(
+            *controller_factory_, parent_window, DialogMode::open, options,
+            initial_directory ? &*initial_directory : nullptr, nullptr,
+            confirm_button_text ? &*confirm_button_text : nullptr));
+      })) {
+    result(FlutterError("System error", "The file selector is shutting down"));
+  }
+}
+
+void FileSelectorPlugin::ShowSaveDialog(
+    const SelectionOptions& options, const std::string* initialDirectory,
+    const std::string* suggestedName, const std::string* confirmButtonText,
+    std::function<void(ErrorOr<FileDialogResult> reply)> result) {
+  const HWND parent_window = get_root_window_();
+  const std::optional<std::string> initial_directory =
+      initialDirectory ? std::make_optional(*initialDirectory) : std::nullopt;
+  const std::optional<std::string> suggested_name =
+      suggestedName ? std::make_optional(*suggestedName) : std::nullopt;
+  const std::optional<std::string> confirm_button_text =
+      confirmButtonText ? std::make_optional(*confirmButtonText) : std::nullopt;
+  if (!Enqueue([this, parent_window, options, initial_directory, suggested_name,
+                confirm_button_text, result](HRESULT com_result) {
+        if (FAILED(com_result)) {
+          result(FlutterError(
+              "System error", "Could not initialize the file dialog thread",
+              EncodableValue(std::in_place_type<int32_t>, com_result)));
+          return;
+        }
+        result(ShowDialog(
+            *controller_factory_, parent_window, DialogMode::save, options,
+            initial_directory ? &*initial_directory : nullptr,
+            suggested_name ? &*suggested_name : nullptr,
+            confirm_button_text ? &*confirm_button_text : nullptr));
+      })) {
+    result(FlutterError("System error", "The file selector is shutting down"));
+  }
+}
+
+bool FileSelectorPlugin::Enqueue(Task task) {
+  {
+    std::lock_guard<std::mutex> lock(task_mutex_);
+    if (stopping_) {
+      return false;
+    }
+    tasks_.push(std::move(task));
+  }
+  task_ready_.notify_one();
+  return true;
+}
+
+void FileSelectorPlugin::WorkerLoop() {
+  const HRESULT com_result =
+      ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  for (;;) {
+    Task task;
+    {
+      std::unique_lock<std::mutex> lock(task_mutex_);
+      task_ready_.wait(lock, [this] { return stopping_ || !tasks_.empty(); });
+      if (stopping_) {
+        break;
+      }
+      task = std::move(tasks_.front());
+      tasks_.pop();
+    }
+    task(com_result);
+  }
+  if (SUCCEEDED(com_result)) {
+    ::CoUninitialize();
+  }
 }
 
 }  // namespace file_selector_windows

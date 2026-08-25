@@ -12,6 +12,7 @@
 #include <windows.h>
 
 #include <functional>
+#include <future>
 #include <memory>
 #include <string>
 #include <variant>
@@ -30,40 +31,95 @@ using flutter::CustomEncodableValue;
 using flutter::EncodableList;
 using flutter::EncodableValue;
 
+ErrorOr<FileDialogResult> WaitForOpenDialog(
+    FileSelectorPlugin& plugin, const SelectionOptions& options,
+    const std::string* initial_directory,
+    const std::string* confirm_button_text) {
+  std::promise<ErrorOr<FileDialogResult>> promise;
+  std::future<ErrorOr<FileDialogResult>> future = promise.get_future();
+  plugin.ShowOpenDialog(options, initial_directory, confirm_button_text,
+                        [&promise](ErrorOr<FileDialogResult> reply) {
+                          promise.set_value(std::move(reply));
+                        });
+  return future.get();
+}
+
+ErrorOr<FileDialogResult> WaitForSaveDialog(
+    FileSelectorPlugin& plugin, const SelectionOptions& options,
+    const std::string* initial_directory, const std::string* suggested_name,
+    const std::string* confirm_button_text) {
+  std::promise<ErrorOr<FileDialogResult>> promise;
+  std::future<ErrorOr<FileDialogResult>> future = promise.get_future();
+  plugin.ShowSaveDialog(options, initial_directory, suggested_name,
+                        confirm_button_text,
+                        [&promise](ErrorOr<FileDialogResult> reply) {
+                          promise.set_value(std::move(reply));
+                        });
+  return future.get();
+}
+
+IShellItemPtr CreateShellItem(const std::wstring& path) {
+  IShellItemPtr item;
+  ::SHCreateItemFromParsingName(path.c_str(), nullptr, IID_PPV_ARGS(&item));
+  return item;
+}
+
+IShellItemArrayPtr CreateShellItemArray(const std::wstring& path) {
+  IShellItemPtr item = CreateShellItem(path);
+  IShellItemArrayPtr items;
+  ::SHCreateShellItemArrayFromShellItem(item, IID_PPV_ARGS(&items));
+  return items;
+}
+
+IShellItemArrayPtr CreateShellItemArray(const std::wstring& first_path,
+                                        const std::wstring& second_path) {
+  PIDLIST_ABSOLUTE first_item = ::ILCreateFromPath(first_path.c_str());
+  PIDLIST_ABSOLUTE second_item = ::ILCreateFromPath(second_path.c_str());
+  LPCITEMIDLIST item_ids[] = {first_item, second_item};
+  IShellItemArrayPtr items;
+  ::SHCreateShellItemArrayFromIDLists(2, item_ids, &items);
+  ::ILFree(first_item);
+  ::ILFree(second_item);
+  return items;
+}
+
 }  // namespace
 
 TEST(FileSelectorPlugin, TestOpenSimple) {
   const HWND fake_window = reinterpret_cast<HWND>(1337);
+  const DWORD caller_thread = ::GetCurrentThreadId();
+  DWORD dialog_thread = caller_thread;
   ScopedTestShellItem fake_selected_file;
-  IShellItemArrayPtr fake_result_array;
-  ::SHCreateShellItemArrayFromShellItem(fake_selected_file.file(),
-                                        IID_PPV_ARGS(&fake_result_array));
+  const std::wstring selected_path = fake_selected_file.path();
 
   bool shown = false;
-  MockShow show_validator = [&shown, fake_result_array, fake_window](
-                                const TestFileDialogController& dialog,
-                                HWND parent) {
-    shown = true;
-    EXPECT_EQ(parent, fake_window);
+  MockShow show_validator =
+      [&shown, &dialog_thread, selected_path, fake_window](
+          const TestFileDialogController& dialog, HWND parent) {
+        shown = true;
+        dialog_thread = ::GetCurrentThreadId();
+        EXPECT_EQ(parent, fake_window);
 
-    // Validate options.
-    FILEOPENDIALOGOPTIONS options;
-    dialog.GetOptions(&options);
-    EXPECT_EQ(options & FOS_ALLOWMULTISELECT, 0U);
-    EXPECT_EQ(options & FOS_PICKFOLDERS, 0U);
+        // Validate options.
+        FILEOPENDIALOGOPTIONS options;
+        dialog.GetOptions(&options);
+        EXPECT_EQ(options & FOS_ALLOWMULTISELECT, 0U);
+        EXPECT_EQ(options & FOS_PICKFOLDERS, 0U);
 
-    return MockShowResult(fake_result_array);
-  };
+        return MockShowResult(CreateShellItemArray(selected_path));
+      };
 
   FileSelectorPlugin plugin(
       [fake_window] { return fake_window; },
       std::make_unique<TestFileDialogControllerFactory>(show_validator));
-  ErrorOr<FileDialogResult> result = plugin.ShowOpenDialog(
+  ErrorOr<FileDialogResult> result = WaitForOpenDialog(
+      plugin,
       SelectionOptions(/* allow multiple = */ false,
                        /* select folders = */ false, EncodableList()),
       nullptr, nullptr);
 
   EXPECT_TRUE(shown);
+  EXPECT_NE(dialog_thread, caller_thread);
   ASSERT_FALSE(result.has_error());
   const EncodableList& paths = result.value().paths();
   ASSERT_EQ(paths.size(), 1);
@@ -75,12 +131,10 @@ TEST(FileSelectorPlugin, TestOpenSimple) {
 TEST(FileSelectorPlugin, TestOpenWithArguments) {
   const HWND fake_window = reinterpret_cast<HWND>(1337);
   ScopedTestShellItem fake_selected_file;
-  IShellItemArrayPtr fake_result_array;
-  ::SHCreateShellItemArrayFromShellItem(fake_selected_file.file(),
-                                        IID_PPV_ARGS(&fake_result_array));
+  const std::wstring selected_path = fake_selected_file.path();
 
   bool shown = false;
-  MockShow show_validator = [&shown, fake_result_array, fake_window](
+  MockShow show_validator = [&shown, selected_path, fake_window](
                                 const TestFileDialogController& dialog,
                                 HWND parent) {
     shown = true;
@@ -92,7 +146,7 @@ TEST(FileSelectorPlugin, TestOpenWithArguments) {
     EXPECT_EQ(dialog.GetSetFolderPath(), L"C:\\Program Files");
     EXPECT_EQ(dialog.GetOkButtonLabel(), L"Open it!");
 
-    return MockShowResult(fake_result_array);
+    return MockShowResult(CreateShellItemArray(selected_path));
   };
 
   FileSelectorPlugin plugin(
@@ -101,7 +155,8 @@ TEST(FileSelectorPlugin, TestOpenWithArguments) {
   // This directory must exist.
   std::string initial_directory("C:\\Program Files");
   std::string confirm_button("Open it!");
-  ErrorOr<FileDialogResult> result = plugin.ShowOpenDialog(
+  ErrorOr<FileDialogResult> result = WaitForOpenDialog(
+      plugin,
       SelectionOptions(/* allow multiple = */ false,
                        /* select folders = */ false, EncodableList()),
       &initial_directory, &confirm_button);
@@ -119,16 +174,11 @@ TEST(FileSelectorPlugin, TestOpenMultiple) {
   const HWND fake_window = reinterpret_cast<HWND>(1337);
   ScopedTestFileIdList fake_selected_file_1;
   ScopedTestFileIdList fake_selected_file_2;
-  LPCITEMIDLIST fake_selected_files[] = {
-      fake_selected_file_1.file(),
-      fake_selected_file_2.file(),
-  };
-  IShellItemArrayPtr fake_result_array;
-  ::SHCreateShellItemArrayFromIDLists(2, fake_selected_files,
-                                      &fake_result_array);
+  const std::wstring first_path = fake_selected_file_1.path();
+  const std::wstring second_path = fake_selected_file_2.path();
 
   bool shown = false;
-  MockShow show_validator = [&shown, fake_result_array, fake_window](
+  MockShow show_validator = [&shown, first_path, second_path, fake_window](
                                 const TestFileDialogController& dialog,
                                 HWND parent) {
     shown = true;
@@ -140,13 +190,14 @@ TEST(FileSelectorPlugin, TestOpenMultiple) {
     EXPECT_NE(options & FOS_ALLOWMULTISELECT, 0U);
     EXPECT_EQ(options & FOS_PICKFOLDERS, 0U);
 
-    return MockShowResult(fake_result_array);
+    return MockShowResult(CreateShellItemArray(first_path, second_path));
   };
 
   FileSelectorPlugin plugin(
       [fake_window] { return fake_window; },
       std::make_unique<TestFileDialogControllerFactory>(show_validator));
-  ErrorOr<FileDialogResult> result = plugin.ShowOpenDialog(
+  ErrorOr<FileDialogResult> result = WaitForOpenDialog(
+      plugin,
       SelectionOptions(/* allow multiple = */ true,
                        /* select folders = */ false, EncodableList()),
       nullptr, nullptr);
@@ -165,9 +216,7 @@ TEST(FileSelectorPlugin, TestOpenMultiple) {
 TEST(FileSelectorPlugin, TestOpenWithFilter) {
   const HWND fake_window = reinterpret_cast<HWND>(1337);
   ScopedTestShellItem fake_selected_file;
-  IShellItemArrayPtr fake_result_array;
-  ::SHCreateShellItemArrayFromShellItem(fake_selected_file.file(),
-                                        IID_PPV_ARGS(&fake_result_array));
+  const std::wstring selected_path = fake_selected_file.path();
 
   const EncodableValue text_group =
       CustomEncodableValue(TypeGroup("Text", EncodableList({
@@ -184,7 +233,7 @@ TEST(FileSelectorPlugin, TestOpenWithFilter) {
       CustomEncodableValue(TypeGroup("Any", EncodableList()));
 
   bool shown = false;
-  MockShow show_validator = [&shown, fake_result_array, fake_window](
+  MockShow show_validator = [&shown, selected_path, fake_window](
                                 const TestFileDialogController& dialog,
                                 HWND parent) {
     shown = true;
@@ -202,21 +251,22 @@ TEST(FileSelectorPlugin, TestOpenWithFilter) {
       EXPECT_EQ(filters[2].spec, L"*.*");
     }
 
-    return MockShowResult(fake_result_array);
+    return MockShowResult(CreateShellItemArray(selected_path));
   };
 
   FileSelectorPlugin plugin(
       [fake_window] { return fake_window; },
       std::make_unique<TestFileDialogControllerFactory>(show_validator));
   ErrorOr<FileDialogResult> result =
-      plugin.ShowOpenDialog(SelectionOptions(/* allow multiple = */ false,
-                                             /* select folders = */ false,
-                                             EncodableList({
-                                                 text_group,
-                                                 image_group,
-                                                 any_group,
-                                             })),
-                            nullptr, nullptr);
+      WaitForOpenDialog(plugin,
+                        SelectionOptions(/* allow multiple = */ false,
+                                         /* select folders = */ false,
+                                         EncodableList({
+                                             text_group,
+                                             image_group,
+                                             any_group,
+                                         })),
+                        nullptr, nullptr);
 
   EXPECT_TRUE(shown);
   ASSERT_FALSE(result.has_error());
@@ -244,7 +294,8 @@ TEST(FileSelectorPlugin, TestOpenCancel) {
   FileSelectorPlugin plugin(
       [fake_window] { return fake_window; },
       std::make_unique<TestFileDialogControllerFactory>(show_validator));
-  ErrorOr<FileDialogResult> result = plugin.ShowOpenDialog(
+  ErrorOr<FileDialogResult> result = WaitForOpenDialog(
+      plugin,
       SelectionOptions(/* allow multiple = */ false,
                        /* select folders = */ false, EncodableList()),
       nullptr, nullptr);
@@ -259,27 +310,29 @@ TEST(FileSelectorPlugin, TestOpenCancel) {
 TEST(FileSelectorPlugin, TestSaveSimple) {
   const HWND fake_window = reinterpret_cast<HWND>(1337);
   ScopedTestShellItem fake_selected_file;
+  const std::wstring selected_path = fake_selected_file.path();
 
   bool shown = false;
-  MockShow show_validator =
-      [&shown, fake_result = fake_selected_file.file(), fake_window](
-          const TestFileDialogController& dialog, HWND parent) {
-        shown = true;
-        EXPECT_EQ(parent, fake_window);
+  MockShow show_validator = [&shown, selected_path, fake_window](
+                                const TestFileDialogController& dialog,
+                                HWND parent) {
+    shown = true;
+    EXPECT_EQ(parent, fake_window);
 
-        // Validate options.
-        FILEOPENDIALOGOPTIONS options;
-        dialog.GetOptions(&options);
-        EXPECT_EQ(options & FOS_ALLOWMULTISELECT, 0U);
-        EXPECT_EQ(options & FOS_PICKFOLDERS, 0U);
+    // Validate options.
+    FILEOPENDIALOGOPTIONS options;
+    dialog.GetOptions(&options);
+    EXPECT_EQ(options & FOS_ALLOWMULTISELECT, 0U);
+    EXPECT_EQ(options & FOS_PICKFOLDERS, 0U);
 
-        return MockShowResult(fake_result);
-      };
+    return MockShowResult(CreateShellItem(selected_path));
+  };
 
   FileSelectorPlugin plugin(
       [fake_window] { return fake_window; },
       std::make_unique<TestFileDialogControllerFactory>(show_validator));
-  ErrorOr<FileDialogResult> result = plugin.ShowSaveDialog(
+  ErrorOr<FileDialogResult> result = WaitForSaveDialog(
+      plugin,
       SelectionOptions(/* allow multiple = */ false,
                        /* select folders = */ false, EncodableList()),
       nullptr, nullptr, nullptr);
@@ -296,24 +349,25 @@ TEST(FileSelectorPlugin, TestSaveSimple) {
 TEST(FileSelectorPlugin, TestSaveWithArguments) {
   const HWND fake_window = reinterpret_cast<HWND>(1337);
   ScopedTestShellItem fake_selected_file;
+  const std::wstring selected_path = fake_selected_file.path();
 
   bool shown = false;
-  MockShow show_validator =
-      [&shown, fake_result = fake_selected_file.file(), fake_window](
-          const TestFileDialogController& dialog, HWND parent) {
-        shown = true;
-        EXPECT_EQ(parent, fake_window);
+  MockShow show_validator = [&shown, selected_path, fake_window](
+                                const TestFileDialogController& dialog,
+                                HWND parent) {
+    shown = true;
+    EXPECT_EQ(parent, fake_window);
 
-        // Validate arguments.
-        EXPECT_EQ(dialog.GetDialogFolderPath(), L"C:\\Program Files");
-        // Make sure that the folder was called via SetFolder, not
-        // SetDefaultFolder.
-        EXPECT_EQ(dialog.GetSetFolderPath(), L"C:\\Program Files");
-        EXPECT_EQ(dialog.GetFileName(), L"a name");
-        EXPECT_EQ(dialog.GetOkButtonLabel(), L"Save it!");
+    // Validate arguments.
+    EXPECT_EQ(dialog.GetDialogFolderPath(), L"C:\\Program Files");
+    // Make sure that the folder was called via SetFolder, not
+    // SetDefaultFolder.
+    EXPECT_EQ(dialog.GetSetFolderPath(), L"C:\\Program Files");
+    EXPECT_EQ(dialog.GetFileName(), L"a name");
+    EXPECT_EQ(dialog.GetOkButtonLabel(), L"Save it!");
 
-        return MockShowResult(fake_result);
-      };
+    return MockShowResult(CreateShellItem(selected_path));
+  };
 
   FileSelectorPlugin plugin(
       [fake_window] { return fake_window; },
@@ -322,7 +376,8 @@ TEST(FileSelectorPlugin, TestSaveWithArguments) {
   std::string initial_directory("C:\\Program Files");
   std::string suggested_name("a name");
   std::string confirm_button("Save it!");
-  ErrorOr<FileDialogResult> result = plugin.ShowSaveDialog(
+  ErrorOr<FileDialogResult> result = WaitForSaveDialog(
+      plugin,
       SelectionOptions(/* allow multiple = */ false,
                        /* select folders = */ false, EncodableList()),
       &initial_directory, &suggested_name, &confirm_button);
@@ -339,6 +394,7 @@ TEST(FileSelectorPlugin, TestSaveWithArguments) {
 TEST(FileSelectorPlugin, TestSaveWithFilter) {
   const HWND fake_window = reinterpret_cast<HWND>(1337);
   ScopedTestShellItem fake_selected_file;
+  const std::wstring selected_path = fake_selected_file.path();
 
   const EncodableValue text_group =
       CustomEncodableValue(TypeGroup("Text", EncodableList({
@@ -353,36 +409,37 @@ TEST(FileSelectorPlugin, TestSaveWithFilter) {
                                                })));
 
   bool shown = false;
-  MockShow show_validator =
-      [&shown, fake_result = fake_selected_file.file(), fake_window](
-          const TestFileDialogController& dialog, HWND parent) {
-        shown = true;
-        EXPECT_EQ(parent, fake_window);
+  MockShow show_validator = [&shown, selected_path, fake_window](
+                                const TestFileDialogController& dialog,
+                                HWND parent) {
+    shown = true;
+    EXPECT_EQ(parent, fake_window);
 
-        // Validate filter.
-        const std::vector<DialogFilter>& filters = dialog.GetFileTypes();
-        EXPECT_EQ(filters.size(), 2U);
-        if (filters.size() == 2U) {
-          EXPECT_EQ(filters[0].name, L"Text");
-          EXPECT_EQ(filters[0].spec, L"*.txt;*.json");
-          EXPECT_EQ(filters[1].name, L"Images");
-          EXPECT_EQ(filters[1].spec, L"*.png;*.gif;*.jpeg");
-        }
+    // Validate filter.
+    const std::vector<DialogFilter>& filters = dialog.GetFileTypes();
+    EXPECT_EQ(filters.size(), 2U);
+    if (filters.size() == 2U) {
+      EXPECT_EQ(filters[0].name, L"Text");
+      EXPECT_EQ(filters[0].spec, L"*.txt;*.json");
+      EXPECT_EQ(filters[1].name, L"Images");
+      EXPECT_EQ(filters[1].spec, L"*.png;*.gif;*.jpeg");
+    }
 
-        return MockShowResult(fake_result);
-      };
+    return MockShowResult(CreateShellItem(selected_path));
+  };
 
   FileSelectorPlugin plugin(
       [fake_window] { return fake_window; },
       std::make_unique<TestFileDialogControllerFactory>(show_validator));
   ErrorOr<FileDialogResult> result =
-      plugin.ShowSaveDialog(SelectionOptions(/* allow multiple = */ false,
-                                             /* select folders = */ false,
-                                             EncodableList({
-                                                 text_group,
-                                                 image_group,
-                                             })),
-                            nullptr, nullptr, nullptr);
+      WaitForSaveDialog(plugin,
+                        SelectionOptions(/* allow multiple = */ false,
+                                         /* select folders = */ false,
+                                         EncodableList({
+                                             text_group,
+                                             image_group,
+                                         })),
+                        nullptr, nullptr, nullptr);
 
   EXPECT_TRUE(shown);
   ASSERT_FALSE(result.has_error());
@@ -410,7 +467,8 @@ TEST(FileSelectorPlugin, TestSaveCancel) {
   FileSelectorPlugin plugin(
       [fake_window] { return fake_window; },
       std::make_unique<TestFileDialogControllerFactory>(show_validator));
-  ErrorOr<FileDialogResult> result = plugin.ShowSaveDialog(
+  ErrorOr<FileDialogResult> result = WaitForSaveDialog(
+      plugin,
       SelectionOptions(/* allow multiple = */ false,
                        /* select folders = */ false, EncodableList()),
       nullptr, nullptr, nullptr);
@@ -424,16 +482,10 @@ TEST(FileSelectorPlugin, TestSaveCancel) {
 
 TEST(FileSelectorPlugin, TestGetDirectorySimple) {
   const HWND fake_window = reinterpret_cast<HWND>(1337);
-  IShellItemPtr fake_selected_directory;
-  // This must be a directory that actually exists.
-  ::SHCreateItemFromParsingName(L"C:\\Program Files", nullptr,
-                                IID_PPV_ARGS(&fake_selected_directory));
-  IShellItemArrayPtr fake_result_array;
-  ::SHCreateShellItemArrayFromShellItem(fake_selected_directory,
-                                        IID_PPV_ARGS(&fake_result_array));
+  const std::wstring selected_path = L"C:\\Program Files";
 
   bool shown = false;
-  MockShow show_validator = [&shown, fake_result_array, fake_window](
+  MockShow show_validator = [&shown, selected_path, fake_window](
                                 const TestFileDialogController& dialog,
                                 HWND parent) {
     shown = true;
@@ -445,13 +497,14 @@ TEST(FileSelectorPlugin, TestGetDirectorySimple) {
     EXPECT_EQ(options & FOS_ALLOWMULTISELECT, 0U);
     EXPECT_NE(options & FOS_PICKFOLDERS, 0U);
 
-    return MockShowResult(fake_result_array);
+    return MockShowResult(CreateShellItemArray(selected_path));
   };
 
   FileSelectorPlugin plugin(
       [fake_window] { return fake_window; },
       std::make_unique<TestFileDialogControllerFactory>(show_validator));
-  ErrorOr<FileDialogResult> result = plugin.ShowOpenDialog(
+  ErrorOr<FileDialogResult> result = WaitForOpenDialog(
+      plugin,
       SelectionOptions(/* allow multiple = */ false,
                        /* select folders = */ true, EncodableList()),
       nullptr, nullptr);
@@ -471,16 +524,11 @@ TEST(FileSelectorPlugin, TestGetDirectoryMultiple) {
   // to use for unit tests.
   ScopedTestFileIdList fake_selected_dir_1;
   ScopedTestFileIdList fake_selected_dir_2;
-  LPCITEMIDLIST fake_selected_dirs[] = {
-      fake_selected_dir_1.file(),
-      fake_selected_dir_2.file(),
-  };
-  IShellItemArrayPtr fake_result_array;
-  ::SHCreateShellItemArrayFromIDLists(2, fake_selected_dirs,
-                                      &fake_result_array);
+  const std::wstring first_path = fake_selected_dir_1.path();
+  const std::wstring second_path = fake_selected_dir_2.path();
 
   bool shown = false;
-  MockShow show_validator = [&shown, fake_result_array, fake_window](
+  MockShow show_validator = [&shown, first_path, second_path, fake_window](
                                 const TestFileDialogController& dialog,
                                 HWND parent) {
     shown = true;
@@ -492,13 +540,14 @@ TEST(FileSelectorPlugin, TestGetDirectoryMultiple) {
     EXPECT_NE(options & FOS_ALLOWMULTISELECT, 0U);
     EXPECT_NE(options & FOS_PICKFOLDERS, 0U);
 
-    return MockShowResult(fake_result_array);
+    return MockShowResult(CreateShellItemArray(first_path, second_path));
   };
 
   FileSelectorPlugin plugin(
       [fake_window] { return fake_window; },
       std::make_unique<TestFileDialogControllerFactory>(show_validator));
-  ErrorOr<FileDialogResult> result = plugin.ShowOpenDialog(
+  ErrorOr<FileDialogResult> result = WaitForOpenDialog(
+      plugin,
       SelectionOptions(/* allow multiple = */ true, /* select folders = */ true,
                        EncodableList()),
       nullptr, nullptr);
@@ -528,7 +577,8 @@ TEST(FileSelectorPlugin, TestGetDirectoryCancel) {
   FileSelectorPlugin plugin(
       [fake_window] { return fake_window; },
       std::make_unique<TestFileDialogControllerFactory>(show_validator));
-  ErrorOr<FileDialogResult> result = plugin.ShowOpenDialog(
+  ErrorOr<FileDialogResult> result = WaitForOpenDialog(
+      plugin,
       SelectionOptions(/* allow multiple = */ false,
                        /* select folders = */ true, EncodableList()),
       nullptr, nullptr);
