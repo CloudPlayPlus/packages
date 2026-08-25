@@ -7,7 +7,7 @@
 #include <flutter/method_channel.h>
 #include <flutter/plugin_registrar_windows.h>
 
-#include <condition_variable>
+#include <atomic>
 #include <functional>
 #include <mutex>
 #include <queue>
@@ -49,6 +49,8 @@ class FileSelectorPlugin : public flutter::Plugin, public FileSelectorApi {
   using Task = std::function<void(HRESULT)>;
 
   bool Enqueue(Task task);
+  static LRESULT CALLBACK MessageWindowProc(HWND window, UINT message,
+                                            WPARAM wparam, LPARAM lparam);
   void WorkerLoop();
 
   // The provider for the root window to attach the dialog to.
@@ -58,9 +60,13 @@ class FileSelectorPlugin : public flutter::Plugin, public FileSelectorApi {
   std::unique_ptr<FileDialogControllerFactory> controller_factory_;
 
   std::mutex task_mutex_;
-  std::condition_variable task_ready_;
   std::queue<Task> tasks_;
   bool stopping_ = false;
+  std::atomic<bool> shutdown_requested_ = false;
+  HANDLE task_event_ = nullptr;
+  HANDLE worker_ready_event_ = nullptr;
+  std::atomic<HWND> message_window_ = nullptr;
+  FileDialogController* active_dialog_ = nullptr;
   std::thread worker_;
 };
 

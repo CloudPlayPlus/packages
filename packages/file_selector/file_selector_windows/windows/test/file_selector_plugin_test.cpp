@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 #include <windows.h>
 
+#include <chrono>
 #include <functional>
 #include <future>
 #include <memory>
@@ -305,6 +306,64 @@ TEST(FileSelectorPlugin, TestOpenCancel) {
   const EncodableList& paths = result.value().paths();
   EXPECT_EQ(paths.size(), 0);
   EXPECT_EQ(result.value().type_group_index(), nullptr);
+}
+
+TEST(FileSelectorPlugin, TestShutdownClosesOpenDialog) {
+  const HWND fake_window = reinterpret_cast<HWND>(1337);
+  std::promise<void> dialog_shown;
+  std::future<void> dialog_shown_future = dialog_shown.get_future();
+  bool close_observed = false;
+
+  MockShow show_validator = [&dialog_shown, &close_observed](
+                                const TestFileDialogController& dialog,
+                                HWND /* parent */) {
+    dialog_shown.set_value();
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!dialog.was_closed() &&
+           std::chrono::steady_clock::now() < deadline) {
+      const auto remaining =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              deadline - std::chrono::steady_clock::now());
+      const DWORD timeout =
+          remaining.count() > 0 ? static_cast<DWORD>(remaining.count()) : 0;
+      const DWORD wait_result = ::MsgWaitForMultipleObjectsEx(
+          0, nullptr, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+      if (wait_result == WAIT_TIMEOUT) {
+        break;
+      }
+      MSG message;
+      while (::PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+        ::TranslateMessage(&message);
+        ::DispatchMessageW(&message);
+      }
+    }
+    close_observed = dialog.was_closed();
+    return MockShowResult();
+  };
+
+  std::promise<ErrorOr<FileDialogResult>> reply;
+  std::future<ErrorOr<FileDialogResult>> reply_future = reply.get_future();
+  auto plugin = std::make_unique<FileSelectorPlugin>(
+      [fake_window] { return fake_window; },
+      std::make_unique<TestFileDialogControllerFactory>(show_validator));
+  plugin->ShowOpenDialog(
+      SelectionOptions(/* allow multiple = */ false,
+                       /* select folders = */ false, EncodableList()),
+      nullptr, nullptr, [&reply](ErrorOr<FileDialogResult> result) {
+        reply.set_value(std::move(result));
+      });
+
+  ASSERT_EQ(dialog_shown_future.wait_for(std::chrono::seconds(5)),
+            std::future_status::ready);
+  plugin.reset();
+
+  EXPECT_TRUE(close_observed);
+  ASSERT_EQ(reply_future.wait_for(std::chrono::seconds(5)),
+            std::future_status::ready);
+  ErrorOr<FileDialogResult> result = reply_future.get();
+  ASSERT_FALSE(result.has_error());
+  EXPECT_TRUE(result.value().paths().empty());
 }
 
 TEST(FileSelectorPlugin, TestSaveSimple) {

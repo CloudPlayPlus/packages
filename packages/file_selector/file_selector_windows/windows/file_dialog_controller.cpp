@@ -47,6 +47,10 @@ HRESULT FileDialogController::Show(HWND parent) {
   return dialog_->Show(parent);
 }
 
+HRESULT FileDialogController::Close(HRESULT status) {
+  return dialog_->Close(status);
+}
+
 HRESULT FileDialogController::GetResult(IShellItem** out_item) const {
   return dialog_->GetResult(out_item);
 }

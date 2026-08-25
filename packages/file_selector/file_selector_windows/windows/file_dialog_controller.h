@@ -37,6 +37,7 @@ class FileDialogController {
   virtual HRESULT GetOptions(FILEOPENDIALOGOPTIONS* out_options) const;
   virtual HRESULT SetOptions(FILEOPENDIALOGOPTIONS options);
   virtual HRESULT Show(HWND parent);
+  virtual HRESULT Close(HRESULT status);
   virtual HRESULT GetResult(IShellItem** out_item) const;
   virtual HRESULT GetFileTypeIndex(UINT* out_index) const;
 
