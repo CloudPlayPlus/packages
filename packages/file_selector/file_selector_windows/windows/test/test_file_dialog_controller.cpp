@@ -54,6 +54,11 @@ HRESULT TestFileDialogController::Show(HWND parent) {
   return S_OK;
 }
 
+HRESULT TestFileDialogController::Close(HRESULT /* status */) {
+  was_closed_ = true;
+  return S_OK;
+}
+
 HRESULT TestFileDialogController::GetResult(IShellItem** out_item) const {
   *out_item = std::get<IShellItemPtr>(mock_result_);
   (*out_item)->AddRef();
@@ -102,6 +107,8 @@ std::wstring TestFileDialogController::GetFileName() const {
   ::CoTaskMemFree(name_chars);
   return name;
 }
+
+bool TestFileDialogController::was_closed() const { return was_closed_; }
 
 const std::vector<DialogFilter>& TestFileDialogController::GetFileTypes()
     const {

@@ -164,13 +164,14 @@ class FileSelectorApi {
   FileSelectorApi(const FileSelectorApi&) = delete;
   FileSelectorApi& operator=(const FileSelectorApi&) = delete;
   virtual ~FileSelectorApi() {}
-  virtual ErrorOr<FileDialogResult> ShowOpenDialog(
+  virtual void ShowOpenDialog(
       const SelectionOptions& options, const std::string* initial_directory,
-      const std::string* confirm_button_text) = 0;
-  virtual ErrorOr<FileDialogResult> ShowSaveDialog(
+      const std::string* confirm_button_text,
+      std::function<void(ErrorOr<FileDialogResult> reply)> result) = 0;
+  virtual void ShowSaveDialog(
       const SelectionOptions& options, const std::string* initial_directory,
-      const std::string* suggested_name,
-      const std::string* confirm_button_text) = 0;
+      const std::string* suggested_name, const std::string* confirm_button_text,
+      std::function<void(ErrorOr<FileDialogResult> reply)> result) = 0;
 
   // The codec used by FileSelectorApi.
   static const flutter::StandardMessageCodec& GetCodec();

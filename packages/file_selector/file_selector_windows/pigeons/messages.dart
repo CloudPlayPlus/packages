@@ -49,11 +49,13 @@ class FileDialogResult {
 
 @HostApi()
 abstract class FileSelectorApi {
+  @async
   FileDialogResult showOpenDialog(
     SelectionOptions options,
     String? initialDirectory,
     String? confirmButtonText,
   );
+  @async
   FileDialogResult showSaveDialog(
     SelectionOptions options,
     String? initialDirectory,

@@ -1,5 +1,8 @@
-## NEXT
+## 0.9.3+6
 
+* Runs native file dialogs on a dedicated, message-pumping STA thread so that
+  they do not block the Flutter platform thread, and closes active dialogs
+  during plugin shutdown.
 * Updates minimum supported SDK version to Flutter 3.38/Dart 3.10.
 
 ## 0.9.3+5

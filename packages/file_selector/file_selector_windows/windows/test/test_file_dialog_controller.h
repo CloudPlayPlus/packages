@@ -55,6 +55,7 @@ class TestFileDialogController : public FileDialogController {
   HRESULT SetFileTypes(UINT count, COMDLG_FILTERSPEC* filters) override;
   HRESULT SetOkButtonLabel(const wchar_t* text) override;
   HRESULT Show(HWND parent) override;
+  HRESULT Close(HRESULT status) override;
   HRESULT GetResult(IShellItem** out_item) const override;
   HRESULT GetFileTypeIndex(UINT* out_index) const override;
   HRESULT GetResults(IShellItemArray** out_items) const override;
@@ -69,6 +70,7 @@ class TestFileDialogController : public FileDialogController {
   // Gets dialog folder path by calling IFileDialog::GetFolder.
   std::wstring GetDialogFolderPath() const;
   std::wstring GetFileName() const;
+  bool was_closed() const;
   const std::vector<DialogFilter>& GetFileTypes() const;
   std::wstring GetOkButtonLabel() const;
 
@@ -82,6 +84,7 @@ class TestFileDialogController : public FileDialogController {
   std::wstring set_folder_path_;
   std::wstring ok_button_label_;
   std::vector<DialogFilter> filter_groups_;
+  bool was_closed_ = false;
 };
 
 // A controller factory that vends TestFileDialogController instances.

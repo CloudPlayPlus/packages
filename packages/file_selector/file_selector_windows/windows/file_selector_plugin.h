@@ -7,7 +7,11 @@
 #include <flutter/method_channel.h>
 #include <flutter/plugin_registrar_windows.h>
 
+#include <atomic>
 #include <functional>
+#include <mutex>
+#include <queue>
+#include <thread>
 
 #include "file_dialog_controller.h"
 #include "messages.g.h"
@@ -32,20 +36,38 @@ class FileSelectorPlugin : public flutter::Plugin, public FileSelectorApi {
   virtual ~FileSelectorPlugin();
 
   // FileSelectorApi
-  ErrorOr<FileDialogResult> ShowOpenDialog(
+  void ShowOpenDialog(
       const SelectionOptions& options, const std::string* initial_directory,
-      const std::string* confirm_button_text) override;
-  ErrorOr<FileDialogResult> ShowSaveDialog(
+      const std::string* confirm_button_text,
+      std::function<void(ErrorOr<FileDialogResult> reply)> result) override;
+  void ShowSaveDialog(
       const SelectionOptions& options, const std::string* initialDirectory,
-      const std::string* suggestedName,
-      const std::string* confirmButtonText) override;
+      const std::string* suggestedName, const std::string* confirmButtonText,
+      std::function<void(ErrorOr<FileDialogResult> reply)> result) override;
 
  private:
+  using Task = std::function<void(HRESULT)>;
+
+  bool Enqueue(Task task);
+  static LRESULT CALLBACK MessageWindowProc(HWND window, UINT message,
+                                            WPARAM wparam, LPARAM lparam);
+  void WorkerLoop();
+
   // The provider for the root window to attach the dialog to.
   FlutterRootWindowProvider get_root_window_;
 
   // The factory for creating dialog controller instances.
   std::unique_ptr<FileDialogControllerFactory> controller_factory_;
+
+  std::mutex task_mutex_;
+  std::queue<Task> tasks_;
+  bool stopping_ = false;
+  std::atomic<bool> shutdown_requested_ = false;
+  HANDLE task_event_ = nullptr;
+  HANDLE worker_ready_event_ = nullptr;
+  std::atomic<HWND> message_window_ = nullptr;
+  FileDialogController* active_dialog_ = nullptr;
+  std::thread worker_;
 };
 
 }  // namespace file_selector_windows

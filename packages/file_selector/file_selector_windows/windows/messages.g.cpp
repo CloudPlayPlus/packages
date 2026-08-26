@@ -252,16 +252,18 @@ void FileSelectorApi::SetUp(flutter::BinaryMessenger* binary_messenger,
               const auto& encodable_confirm_button_text_arg = args.at(2);
               const auto* confirm_button_text_arg =
                   std::get_if<std::string>(&encodable_confirm_button_text_arg);
-              ErrorOr<FileDialogResult> output = api->ShowOpenDialog(
-                  options_arg, initial_directory_arg, confirm_button_text_arg);
-              if (output.has_error()) {
-                reply(WrapError(output.error()));
-                return;
-              }
-              EncodableList wrapped;
-              wrapped.push_back(
-                  CustomEncodableValue(std::move(output).TakeValue()));
-              reply(EncodableValue(std::move(wrapped)));
+              api->ShowOpenDialog(
+                  options_arg, initial_directory_arg, confirm_button_text_arg,
+                  [reply](ErrorOr<FileDialogResult>&& output) {
+                    if (output.has_error()) {
+                      reply(WrapError(output.error()));
+                      return;
+                    }
+                    EncodableList wrapped;
+                    wrapped.push_back(
+                        CustomEncodableValue(std::move(output).TakeValue()));
+                    reply(EncodableValue(std::move(wrapped)));
+                  });
             } catch (const std::exception& exception) {
               reply(WrapError(exception.what()));
             }
@@ -298,17 +300,18 @@ void FileSelectorApi::SetUp(flutter::BinaryMessenger* binary_messenger,
               const auto& encodable_confirm_button_text_arg = args.at(3);
               const auto* confirm_button_text_arg =
                   std::get_if<std::string>(&encodable_confirm_button_text_arg);
-              ErrorOr<FileDialogResult> output = api->ShowSaveDialog(
-                  options_arg, initial_directory_arg, suggested_name_arg,
-                  confirm_button_text_arg);
-              if (output.has_error()) {
-                reply(WrapError(output.error()));
-                return;
-              }
-              EncodableList wrapped;
-              wrapped.push_back(
-                  CustomEncodableValue(std::move(output).TakeValue()));
-              reply(EncodableValue(std::move(wrapped)));
+              api->ShowSaveDialog(options_arg, initial_directory_arg,
+                                  suggested_name_arg, confirm_button_text_arg,
+                                  [reply](ErrorOr<FileDialogResult>&& output) {
+                                    if (output.has_error()) {
+                                      reply(WrapError(output.error()));
+                                      return;
+                                    }
+                                    EncodableList wrapped;
+                                    wrapped.push_back(CustomEncodableValue(
+                                        std::move(output).TakeValue()));
+                                    reply(EncodableValue(std::move(wrapped)));
+                                  });
             } catch (const std::exception& exception) {
               reply(WrapError(exception.what()));
             }
