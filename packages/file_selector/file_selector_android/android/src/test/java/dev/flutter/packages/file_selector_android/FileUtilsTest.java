@@ -35,6 +35,7 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import org.junit.Before;
 import org.junit.Test;
@@ -130,6 +131,35 @@ public class FileUtilsTest {
     assertTrue(bytes.length > 0);
     String fileStream = new String(bytes, UTF_8);
     assertEquals("fileStream", fileStream);
+  }
+
+  @Test
+  public void failedCopyRemovesPartialFileAndSelectionDirectory() throws IOException {
+    Uri uri = MockContentProvider.PNG_URI;
+    Robolectric.buildContentProvider(MockContentProvider.class).create("dummy");
+    shadowContentResolver.registerInputStream(
+        uri,
+        new InputStream() {
+          private boolean firstRead = true;
+
+          @Override
+          public int read() throws IOException {
+            throw new IOException("Provider read failed");
+          }
+
+          @Override
+          public int read(byte[] buffer, int offset, int length) throws IOException {
+            if (firstRead) {
+              firstRead = false;
+              buffer[offset] = 1;
+              return 1;
+            }
+            throw new IOException("Provider read failed");
+          }
+        });
+
+    assertThrows(IOException.class, () -> FileUtils.getPathFromCopyOfFileFromUri(context, uri));
+    assertEquals(0, new File(context.getCacheDir(), "file_selector").list().length);
   }
 
   @Test

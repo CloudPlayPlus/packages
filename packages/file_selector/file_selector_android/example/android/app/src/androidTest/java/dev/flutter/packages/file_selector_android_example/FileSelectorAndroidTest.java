@@ -79,7 +79,8 @@ public class FileSelectorAndroidTest {
                           File selectedFile = new File(filePath);
                           assertEquals(fileName, selectedFile.getName());
                           assertEquals(
-                              expectedCacheDirectory, selectedFile.getParentFile().getParent());
+                              new File(expectedCacheDirectory, "file_selector").getPath(),
+                              selectedFile.getParentFile().getParent());
                         });
               }
             });

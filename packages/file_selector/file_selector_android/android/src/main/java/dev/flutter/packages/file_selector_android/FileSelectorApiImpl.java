@@ -23,6 +23,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
 import io.flutter.plugin.common.PluginRegistry;
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -175,6 +176,14 @@ public class FileSelectorApiImpl implements FileSelectorApi {
                     if (file != null) {
                       files.add(file);
                     } else {
+                      // The failed batch is never returned to Dart, so release its earlier copies.
+                      for (FileResponse selected : files) {
+                        if (selected.getFileSelectorNativeException() == null) {
+                          File cachedFile = new File(selected.getPath());
+                          cachedFile.delete();
+                          cachedFile.getParentFile().delete();
+                        }
+                      }
                       ResultUtilsKt.completeWithError(
                           callback, new Exception("Failed to read file: " + uri));
                       return;

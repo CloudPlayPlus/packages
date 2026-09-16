@@ -109,7 +109,7 @@ public class FileUtils {
    * trusting ContentProvider-provided filename</a>.
    *
    * <p>Each file is placed in its own directory to avoid conflicts according to the following
-   * scheme: {cacheDir}/{randomUuid}/{fileName}
+   * scheme: {cacheDir}/file_selector/{randomUuid}/{fileName}
    *
    * <p>File extension is changed to match MIME type of the file, if known. Otherwise, the extension
    * is left unchanged.
@@ -123,13 +123,15 @@ public class FileUtils {
   @Nullable
   public static String getPathFromCopyOfFileFromUri(@NonNull Context context, @NonNull Uri uri)
       throws IOException, SecurityException, IllegalArgumentException {
+    File targetDirectory =
+        new File(new File(context.getCacheDir(), "file_selector"), UUID.randomUUID().toString());
+    File outputFile = null;
     try (InputStream inputStream = context.getContentResolver().openInputStream(uri)) {
       // Each returned XFile reads this cache file later. A repeated selection of
       // the same URI must not overwrite bytes still being read by an earlier one.
-      String uuid = UUID.randomUUID().toString();
-      File targetDirectory = new File(context.getCacheDir(), uuid);
-      targetDirectory.mkdir();
-      targetDirectory.deleteOnExit();
+      if (!targetDirectory.mkdirs()) {
+        throw new IOException("Unable to create file selection cache");
+      }
       String fileName = getFileName(context, uri);
       String extension = getFileExtension(context, uri);
 
@@ -144,12 +146,19 @@ public class FileUtils {
       }
 
       String filePath = new File(targetDirectory, fileName).getPath();
-      File outputFile = saferOpenFile(filePath, targetDirectory.getCanonicalPath());
+      outputFile = saferOpenFile(filePath, targetDirectory.getCanonicalPath());
 
       try (OutputStream outputStream = new FileOutputStream(outputFile)) {
         copy(inputStream, outputStream);
         return outputFile.getPath();
       }
+    } catch (IOException | RuntimeException exception) {
+      // No path is returned on failure, so the consumer cannot release this copy.
+      if (outputFile != null) {
+        outputFile.delete();
+      }
+      targetDirectory.delete();
+      throw exception;
     }
   }
 
