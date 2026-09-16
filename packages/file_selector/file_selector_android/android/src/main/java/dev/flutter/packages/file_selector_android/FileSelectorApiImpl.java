@@ -173,7 +173,7 @@ public class FileSelectorApiImpl implements FileSelectorApi {
                   for (int i = 0; i < clipData.getItemCount(); i++) {
                     final ClipData.Item clipItem = clipData.getItemAt(i);
                     final FileResponse file = toFileResponse(clipItem.getUri());
-                    if (file != null) {
+                    if (file != null && file.getFileSelectorNativeException() == null) {
                       files.add(file);
                     } else {
                       // The failed batch is never returned to Dart, so release its earlier copies.
@@ -184,8 +184,13 @@ public class FileSelectorApiImpl implements FileSelectorApi {
                           cachedFile.getParentFile().delete();
                         }
                       }
-                      ResultUtilsKt.completeWithError(
-                          callback, new Exception("Failed to read file: " + uri));
+                      if (file != null) {
+                        // Preserve the structured native error without exposing discarded paths.
+                        ResultUtilsKt.completeWithValue(callback, Collections.singletonList(file));
+                      } else {
+                        ResultUtilsKt.completeWithError(
+                            callback, new Exception("Failed to read file: " + clipItem.getUri()));
+                      }
                       return;
                     }
                   }

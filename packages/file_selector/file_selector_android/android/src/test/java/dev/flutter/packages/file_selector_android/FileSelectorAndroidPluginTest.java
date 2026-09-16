@@ -413,11 +413,19 @@ public class FileSelectorAndroidPluginTest {
   @Test
   public void
       openFilesReturnsNativeException_whenIllegalArgumentExceptionInGetPathFromCopyOfFileFromUri()
-          throws FileNotFoundException {
+          throws IOException {
     try (MockedStatic<FileUtils> mockedFileUtils = mockStatic(FileUtils.class)) {
 
       final ContentResolver mockContentResolver = mock(ContentResolver.class);
 
+      final File firstDirectory = Files.createTempDirectory("native-error-batch-").toFile();
+      final File firstFile = new File(firstDirectory, "first.txt");
+      Files.write(firstFile.toPath(), new byte[] {1, 2, 3});
+      final Uri firstUri = mock(Uri.class);
+      mockedFileUtils
+          .when(() -> FileUtils.getPathFromCopyOfFileFromUri(any(Context.class), eq(firstUri)))
+          .thenReturn(firstFile.getPath());
+      mockContentResolver(mockContentResolver, firstUri, "first.txt", 3, "text/plain");
       final Uri mockUri = mock(Uri.class);
       final String mockUriPath = "some/path/";
       mockedFileUtils
@@ -443,6 +451,7 @@ public class FileSelectorAndroidPluginTest {
                 callbackCalled[0] = true;
                 final List<FileResponse> files = reply.getOrNull();
                 assertNotNull(files);
+                assertEquals(1, files.size());
                 final FileResponse file = files.get(0);
                 assertNotNull(file.getFileSelectorNativeException());
                 assertEquals(FileUtils.FILE_SELECTOR_EXCEPTION_PLACEHOLDER_PATH, file.getPath());
@@ -459,17 +468,22 @@ public class FileSelectorAndroidPluginTest {
 
       final Intent resultMockIntent = mock(Intent.class);
       final ClipData mockClipData = mock(ClipData.class);
-      when(mockClipData.getItemCount()).thenReturn(1);
+      when(mockClipData.getItemCount()).thenReturn(2);
 
+      final ClipData.Item firstItem = mock(ClipData.Item.class);
+      when(firstItem.getUri()).thenReturn(firstUri);
+      when(mockClipData.getItemAt(0)).thenReturn(firstItem);
       final ClipData.Item mockClipDataItem = mock(ClipData.Item.class);
       when(mockClipDataItem.getUri()).thenReturn(mockUri);
-      when(mockClipData.getItemAt(0)).thenReturn(mockClipDataItem);
+      when(mockClipData.getItemAt(1)).thenReturn(mockClipDataItem);
 
       when(resultMockIntent.getClipData()).thenReturn(mockClipData);
 
       listenerArgumentCaptor.getValue().onActivityResult(222, Activity.RESULT_OK, resultMockIntent);
 
       assertTrue(callbackCalled[0]);
+      assertFalse(firstFile.exists());
+      assertFalse(firstDirectory.exists());
     }
   }
 
