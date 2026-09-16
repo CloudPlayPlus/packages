@@ -27,7 +27,7 @@ import androidx.test.espresso.flutter.api.WidgetAssertion;
 import androidx.test.espresso.flutter.model.WidgetInfo;
 import androidx.test.espresso.intent.rule.IntentsRule;
 import androidx.test.ext.junit.rules.ActivityScenarioRule;
-import java.util.UUID;
+import java.io.File;
 import org.junit.Rule;
 import org.junit.Test;
 
@@ -71,22 +71,15 @@ public class FileSelectorAndroidTest {
               @Override
               public void check(View flutterView, WidgetInfo widgetInfo) {
                 String filePath = widgetInfo.getText();
-                String expectedContentUri = "content://file_selector_android_test/dummy.png";
-                String expectedContentUriUuid =
-                    UUID.nameUUIDFromBytes(expectedContentUri.toString().getBytes()).toString();
-
                 myActivityTestRule
                     .getScenario()
                     .onActivity(
                         activity -> {
                           String expectedCacheDirectory = activity.getCacheDir().getPath();
-                          String expectedFilePath =
-                              expectedCacheDirectory
-                                  + "/"
-                                  + expectedContentUriUuid
-                                  + "/"
-                                  + fileName;
-                          assertEquals(filePath, expectedFilePath);
+                          File selectedFile = new File(filePath);
+                          assertEquals(fileName, selectedFile.getName());
+                          assertEquals(
+                              expectedCacheDirectory, selectedFile.getParentFile().getParent());
                         });
               }
             });

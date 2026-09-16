@@ -124,7 +124,9 @@ public class FileUtils {
   public static String getPathFromCopyOfFileFromUri(@NonNull Context context, @NonNull Uri uri)
       throws IOException, SecurityException, IllegalArgumentException {
     try (InputStream inputStream = context.getContentResolver().openInputStream(uri)) {
-      String uuid = UUID.nameUUIDFromBytes(uri.toString().getBytes()).toString();
+      // Each returned XFile reads this cache file later. A repeated selection of
+      // the same URI must not overwrite bytes still being read by an earlier one.
+      String uuid = UUID.randomUUID().toString();
       File targetDirectory = new File(context.getCacheDir(), uuid);
       targetDirectory.mkdir();
       targetDirectory.deleteOnExit();
