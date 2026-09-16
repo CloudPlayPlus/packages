@@ -1,3 +1,12 @@
+## 0.5.2+10
+
+* Returns disk-backed files without loading selected file contents into memory or
+  sending them over the platform channel, fixing out-of-memory crashes with large files.
+* Keeps repeated selections in separate cache files so an active reader is not overwritten.
+* Applies legacy Kotlin only when AGP does not provide built-in Kotlin, retaining
+  support for CloudPlayPlus's pinned Flutter 3.41.6 toolchain.
+* Places selections in a dedicated cache directory with explicit consumer cleanup ownership.
+
 ## 0.5.2+9
 
 * Fixes a crash when a selected file cannot be copied to a readable location (for

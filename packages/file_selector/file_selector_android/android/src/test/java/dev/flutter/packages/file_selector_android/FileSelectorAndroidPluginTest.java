@@ -5,6 +5,7 @@
 package dev.flutter.packages.file_selector_android;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -12,6 +13,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -28,9 +30,10 @@ import android.provider.OpenableColumns;
 import androidx.annotation.NonNull;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
 import io.flutter.plugin.common.PluginRegistry;
-import java.io.DataInputStream;
+import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.InputStream;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.Collections;
 import java.util.List;
 import org.junit.Rule;
@@ -74,12 +77,11 @@ public class FileSelectorAndroidPluginTest {
     // `getType` is only reached when a `FileResponse` is built, so it is unused by
     // the error-path tests; keep it lenient to avoid strict-stubbing warnings.
     lenient().when(mockResolver.getType(uri)).thenReturn(mimeType);
-    when(mockResolver.openInputStream(uri)).thenReturn(mock(InputStream.class));
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})
   @Test
-  public void openFileReturnsSuccessfully() throws FileNotFoundException {
+  public void openLargeFileReturnsCachedPathWithoutReadingContents() throws FileNotFoundException {
     try (MockedStatic<FileUtils> mockedFileUtils = mockStatic(FileUtils.class)) {
       final ContentResolver mockContentResolver = mock(ContentResolver.class);
 
@@ -88,10 +90,10 @@ public class FileSelectorAndroidPluginTest {
       mockedFileUtils
           .when(() -> FileUtils.getPathFromCopyOfFileFromUri(any(Context.class), eq(mockUri)))
           .thenAnswer((Answer<String>) invocation -> mockUriPath);
-      mockContentResolver(mockContentResolver, mockUri, "filename", 30, "text/plain");
+      mockContentResolver(
+          mockContentResolver, mockUri, "filename", 200 * 1024 * 1024, "text/plain");
 
       when(mockObjectFactory.newIntent(Intent.ACTION_OPEN_DOCUMENT)).thenReturn(mockIntent);
-      when(mockObjectFactory.newDataInputStream(any())).thenReturn(mock(DataInputStream.class));
       when(mockActivity.getContentResolver()).thenReturn(mockContentResolver);
       when(mockActivityBinding.getActivity()).thenReturn(mockActivity);
       final FileSelectorApiImpl fileSelectorApi =
@@ -109,10 +111,9 @@ public class FileSelectorAndroidPluginTest {
                 callbackCalled[0] = true;
                 FileResponse file = reply.getOrNull();
                 assertNotNull(file);
-                assertEquals(30, file.getBytes().length);
                 assertEquals("text/plain", file.getMimeType());
                 assertEquals("filename", file.getName());
-                assertEquals(30L, file.getSize());
+                assertEquals(200L * 1024 * 1024, file.getSize());
                 assertEquals(mockUriPath, file.getPath());
                 return null;
               }));
@@ -129,6 +130,7 @@ public class FileSelectorAndroidPluginTest {
       listenerArgumentCaptor.getValue().onActivityResult(221, Activity.RESULT_OK, resultMockIntent);
 
       assertTrue(callbackCalled[0]);
+      verify(mockContentResolver, never()).openInputStream(any());
     }
   }
 
@@ -144,7 +146,8 @@ public class FileSelectorAndroidPluginTest {
       mockedFileUtils
           .when(() -> FileUtils.getPathFromCopyOfFileFromUri(any(Context.class), eq(mockUri)))
           .thenAnswer((Answer<String>) invocation -> mockUriPath);
-      mockContentResolver(mockContentResolver, mockUri, "filename", 30, "text/plain");
+      mockContentResolver(
+          mockContentResolver, mockUri, "filename", 200 * 1024 * 1024, "text/plain");
 
       final Uri mockUri2 = mock(Uri.class);
       final String mockUri2Path = "some/other/path/";
@@ -154,7 +157,6 @@ public class FileSelectorAndroidPluginTest {
       mockContentResolver(mockContentResolver, mockUri2, "filename2", 40, "image/jpg");
 
       when(mockObjectFactory.newIntent(Intent.ACTION_OPEN_DOCUMENT)).thenReturn(mockIntent);
-      when(mockObjectFactory.newDataInputStream(any())).thenReturn(mock(DataInputStream.class));
       when(mockActivity.getContentResolver()).thenReturn(mockContentResolver);
       when(mockActivityBinding.getActivity()).thenReturn(mockActivity);
       final FileSelectorApiImpl fileSelectorApi =
@@ -173,14 +175,12 @@ public class FileSelectorAndroidPluginTest {
                 List<FileResponse> fileList = reply.getOrNull();
                 assertNotNull(fileList);
                 FileResponse file1 = fileList.get(0);
-                assertEquals(30, file1.getBytes().length);
                 assertEquals("text/plain", file1.getMimeType());
                 assertEquals("filename", file1.getName());
-                assertEquals(30L, file1.getSize());
+                assertEquals(200L * 1024 * 1024, file1.getSize());
                 assertEquals(mockUriPath, file1.getPath());
 
                 FileResponse file2 = fileList.get(1);
-                assertEquals(40, file2.getBytes().length);
                 assertEquals("image/jpg", file2.getMimeType());
                 assertEquals("filename2", file2.getName());
                 assertEquals(40L, file2.getSize());
@@ -213,6 +213,7 @@ public class FileSelectorAndroidPluginTest {
       listenerArgumentCaptor.getValue().onActivityResult(222, Activity.RESULT_OK, resultMockIntent);
 
       assertTrue(callbackCalled[0]);
+      verify(mockContentResolver, never()).openInputStream(any());
     }
   }
 
@@ -223,11 +224,20 @@ public class FileSelectorAndroidPluginTest {
   @SuppressWarnings({"rawtypes", "unchecked"})
   @Test
   public void openFilesCompletesWithError_whenSecurityExceptionInGetPathFromCopyOfFileFromUri()
-      throws FileNotFoundException {
+      throws IOException {
 
     try (MockedStatic<FileUtils> mockedFileUtils = mockStatic(FileUtils.class)) {
 
       final ContentResolver mockContentResolver = mock(ContentResolver.class);
+
+      final File firstDirectory = Files.createTempDirectory("selected-batch-").toFile();
+      final File firstFile = new File(firstDirectory, "first.txt");
+      Files.write(firstFile.toPath(), new byte[] {1, 2, 3});
+      final Uri firstUri = mock(Uri.class);
+      mockedFileUtils
+          .when(() -> FileUtils.getPathFromCopyOfFileFromUri(any(Context.class), eq(firstUri)))
+          .thenReturn(firstFile.getPath());
+      mockContentResolver(mockContentResolver, firstUri, "first.txt", 3, "text/plain");
 
       final Uri mockUri = mock(Uri.class);
       mockedFileUtils
@@ -236,7 +246,6 @@ public class FileSelectorAndroidPluginTest {
       mockContentResolver(mockContentResolver, mockUri, "filename", 30, "text/plain");
 
       when(mockObjectFactory.newIntent(Intent.ACTION_OPEN_DOCUMENT)).thenReturn(mockIntent);
-      when(mockObjectFactory.newDataInputStream(any())).thenReturn(mock(DataInputStream.class));
       when(mockActivity.getContentResolver()).thenReturn(mockContentResolver);
       when(mockActivityBinding.getActivity()).thenReturn(mockActivity);
       final FileSelectorApiImpl fileSelectorApi =
@@ -267,11 +276,15 @@ public class FileSelectorAndroidPluginTest {
 
       final Intent resultMockIntent = mock(Intent.class);
       final ClipData mockClipData = mock(ClipData.class);
-      when(mockClipData.getItemCount()).thenReturn(1);
+      when(mockClipData.getItemCount()).thenReturn(2);
+
+      final ClipData.Item firstItem = mock(ClipData.Item.class);
+      when(firstItem.getUri()).thenReturn(firstUri);
+      when(mockClipData.getItemAt(0)).thenReturn(firstItem);
 
       final ClipData.Item mockClipDataItem = mock(ClipData.Item.class);
       when(mockClipDataItem.getUri()).thenReturn(mockUri);
-      when(mockClipData.getItemAt(0)).thenReturn(mockClipDataItem);
+      when(mockClipData.getItemAt(1)).thenReturn(mockClipDataItem);
 
       when(resultMockIntent.getClipData()).thenReturn(mockClipData);
 
@@ -280,8 +293,11 @@ public class FileSelectorAndroidPluginTest {
       listenerArgumentCaptor.getValue().onActivityResult(222, Activity.RESULT_OK, resultMockIntent);
 
       assertTrue(callbackCalled[0]);
+
       assertNotNull(failure[0]);
       assertTrue(failure[0].getMessage().contains("Failed to read file"));
+      assertFalse(firstFile.exists());
+      assertFalse(firstDirectory.exists());
     }
   }
 
@@ -304,7 +320,6 @@ public class FileSelectorAndroidPluginTest {
       mockContentResolver(mockContentResolver, mockUri, "filename", 30, "text/plain");
 
       when(mockObjectFactory.newIntent(Intent.ACTION_OPEN_DOCUMENT)).thenReturn(mockIntent);
-      when(mockObjectFactory.newDataInputStream(any())).thenReturn(mock(DataInputStream.class));
       when(mockActivity.getContentResolver()).thenReturn(mockContentResolver);
       when(mockActivityBinding.getActivity()).thenReturn(mockActivity);
       final FileSelectorApiImpl fileSelectorApi =
@@ -336,6 +351,7 @@ public class FileSelectorAndroidPluginTest {
       listenerArgumentCaptor.getValue().onActivityResult(221, Activity.RESULT_OK, resultMockIntent);
 
       assertTrue(callbackCalled[0]);
+
       assertNotNull(failure[0]);
       assertTrue(failure[0].getMessage().contains("Failed to read file"));
     }
@@ -356,7 +372,6 @@ public class FileSelectorAndroidPluginTest {
       mockContentResolver(mockContentResolver, mockUri, "filename", 30, "text/plain");
 
       when(mockObjectFactory.newIntent(Intent.ACTION_OPEN_DOCUMENT)).thenReturn(mockIntent);
-      when(mockObjectFactory.newDataInputStream(any())).thenReturn(mock(DataInputStream.class));
       when(mockActivity.getContentResolver()).thenReturn(mockContentResolver);
       when(mockActivityBinding.getActivity()).thenReturn(mockActivity);
       final FileSelectorApiImpl fileSelectorApi =
@@ -398,11 +413,19 @@ public class FileSelectorAndroidPluginTest {
   @Test
   public void
       openFilesReturnsNativeException_whenIllegalArgumentExceptionInGetPathFromCopyOfFileFromUri()
-          throws FileNotFoundException {
+          throws IOException {
     try (MockedStatic<FileUtils> mockedFileUtils = mockStatic(FileUtils.class)) {
 
       final ContentResolver mockContentResolver = mock(ContentResolver.class);
 
+      final File firstDirectory = Files.createTempDirectory("native-error-batch-").toFile();
+      final File firstFile = new File(firstDirectory, "first.txt");
+      Files.write(firstFile.toPath(), new byte[] {1, 2, 3});
+      final Uri firstUri = mock(Uri.class);
+      mockedFileUtils
+          .when(() -> FileUtils.getPathFromCopyOfFileFromUri(any(Context.class), eq(firstUri)))
+          .thenReturn(firstFile.getPath());
+      mockContentResolver(mockContentResolver, firstUri, "first.txt", 3, "text/plain");
       final Uri mockUri = mock(Uri.class);
       final String mockUriPath = "some/path/";
       mockedFileUtils
@@ -411,7 +434,6 @@ public class FileSelectorAndroidPluginTest {
       mockContentResolver(mockContentResolver, mockUri, "filename", 30, "text/plain");
 
       when(mockObjectFactory.newIntent(Intent.ACTION_OPEN_DOCUMENT)).thenReturn(mockIntent);
-      when(mockObjectFactory.newDataInputStream(any())).thenReturn(mock(DataInputStream.class));
       when(mockActivity.getContentResolver()).thenReturn(mockContentResolver);
       when(mockActivityBinding.getActivity()).thenReturn(mockActivity);
       final FileSelectorApiImpl fileSelectorApi =
@@ -429,6 +451,7 @@ public class FileSelectorAndroidPluginTest {
                 callbackCalled[0] = true;
                 final List<FileResponse> files = reply.getOrNull();
                 assertNotNull(files);
+                assertEquals(1, files.size());
                 final FileResponse file = files.get(0);
                 assertNotNull(file.getFileSelectorNativeException());
                 assertEquals(FileUtils.FILE_SELECTOR_EXCEPTION_PLACEHOLDER_PATH, file.getPath());
@@ -445,17 +468,22 @@ public class FileSelectorAndroidPluginTest {
 
       final Intent resultMockIntent = mock(Intent.class);
       final ClipData mockClipData = mock(ClipData.class);
-      when(mockClipData.getItemCount()).thenReturn(1);
+      when(mockClipData.getItemCount()).thenReturn(2);
 
+      final ClipData.Item firstItem = mock(ClipData.Item.class);
+      when(firstItem.getUri()).thenReturn(firstUri);
+      when(mockClipData.getItemAt(0)).thenReturn(firstItem);
       final ClipData.Item mockClipDataItem = mock(ClipData.Item.class);
       when(mockClipDataItem.getUri()).thenReturn(mockUri);
-      when(mockClipData.getItemAt(0)).thenReturn(mockClipDataItem);
+      when(mockClipData.getItemAt(1)).thenReturn(mockClipDataItem);
 
       when(resultMockIntent.getClipData()).thenReturn(mockClipData);
 
       listenerArgumentCaptor.getValue().onActivityResult(222, Activity.RESULT_OK, resultMockIntent);
 
       assertTrue(callbackCalled[0]);
+      assertFalse(firstFile.exists());
+      assertFalse(firstDirectory.exists());
     }
   }
 

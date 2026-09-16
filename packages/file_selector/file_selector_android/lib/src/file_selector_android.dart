@@ -56,15 +56,9 @@ class FileSelectorAndroid extends FileSelectorPlatform {
     if (file.fileSelectorNativeException != null) {
       _resolveErrorCodeAndMaybeThrow(file.fileSelectorNativeException!);
     }
-    return XFile.fromData(
-      file.bytes,
-      // Note: The name parameter is not used by XFile. The XFile.name returns
-      // the extracted file name from XFile.path.
-      name: file.name,
-      length: file.size,
-      mimeType: file.mimeType,
-      path: file.path,
-    );
+    // The native picker streams the URI into this cache file. Keep it disk-backed
+    // so opening a large selection never requires a full-file Dart allocation.
+    return XFile(file.path, mimeType: file.mimeType);
   }
 
   FileTypes _fileTypesFromTypeGroups(List<XTypeGroup>? typeGroups) {

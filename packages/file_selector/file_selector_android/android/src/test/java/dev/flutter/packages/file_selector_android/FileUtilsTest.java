@@ -7,6 +7,7 @@ package dev.flutter.packages.file_selector_android;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -34,6 +35,8 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -128,6 +131,52 @@ public class FileUtilsTest {
     assertTrue(bytes.length > 0);
     String fileStream = new String(bytes, UTF_8);
     assertEquals("fileStream", fileStream);
+  }
+
+  @Test
+  public void failedCopyRemovesPartialFileAndSelectionDirectory() throws IOException {
+    Uri uri = MockContentProvider.PNG_URI;
+    Robolectric.buildContentProvider(MockContentProvider.class).create("dummy");
+    shadowContentResolver.registerInputStream(
+        uri,
+        new InputStream() {
+          private boolean firstRead = true;
+
+          @Override
+          public int read() throws IOException {
+            throw new IOException("Provider read failed");
+          }
+
+          @Override
+          public int read(byte[] buffer, int offset, int length) throws IOException {
+            if (firstRead) {
+              firstRead = false;
+              buffer[offset] = 1;
+              return 1;
+            }
+            throw new IOException("Provider read failed");
+          }
+        });
+
+    assertThrows(IOException.class, () -> FileUtils.getPathFromCopyOfFileFromUri(context, uri));
+    assertEquals(0, new File(context.getCacheDir(), "file_selector").list().length);
+  }
+
+  @Test
+  public void repeatedSelectionPreservesEarlierCachedContents() throws IOException {
+    Uri uri = MockContentProvider.PNG_URI;
+    Robolectric.buildContentProvider(MockContentProvider.class).create("dummy");
+    shadowContentResolver.registerInputStream(
+        uri, new ByteArrayInputStream("first".getBytes(UTF_8)));
+    File first = new File(FileUtils.getPathFromCopyOfFileFromUri(context, uri));
+
+    shadowContentResolver.registerInputStream(
+        uri, new ByteArrayInputStream("second".getBytes(UTF_8)));
+    File second = new File(FileUtils.getPathFromCopyOfFileFromUri(context, uri));
+
+    assertNotEquals(first.getPath(), second.getPath());
+    assertEquals("first", new String(Files.readAllBytes(first.toPath()), UTF_8));
+    assertEquals("second", new String(Files.readAllBytes(second.toPath()), UTF_8));
   }
 
   @Test

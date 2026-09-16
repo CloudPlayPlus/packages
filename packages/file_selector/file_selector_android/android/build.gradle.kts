@@ -25,9 +25,17 @@ plugins {
     id("com.android.library")
 }
 
-kotlin {
-    compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+// AGP 9 provides Kotlin unless the app opts out. Older Flutter/AGP consumers
+// still need KGP, but applying it with built-in Kotlin enabled causes a conflict.
+val usesBuiltInKotlin =
+    com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION.substringBefore('.').toInt() >= 9 &&
+        providers.gradleProperty("android.builtInKotlin").orNull != "false"
+if (!usesBuiltInKotlin) {
+    apply(plugin = "kotlin-android")
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+        compilerOptions {
+            jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+        }
     }
 }
 

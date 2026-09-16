@@ -23,9 +23,8 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
 import io.flutter.plugin.common.PluginRegistry;
-import java.io.DataInputStream;
+import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -60,11 +59,6 @@ public class FileSelectorApiImpl implements FileSelectorApi {
     @NonNull
     Intent newIntent(@NonNull String action) {
       return new Intent(action);
-    }
-
-    @NonNull
-    DataInputStream newDataInputStream(InputStream inputStream) {
-      return new DataInputStream(inputStream);
     }
   }
 
@@ -179,11 +173,24 @@ public class FileSelectorApiImpl implements FileSelectorApi {
                   for (int i = 0; i < clipData.getItemCount(); i++) {
                     final ClipData.Item clipItem = clipData.getItemAt(i);
                     final FileResponse file = toFileResponse(clipItem.getUri());
-                    if (file != null) {
+                    if (file != null && file.getFileSelectorNativeException() == null) {
                       files.add(file);
                     } else {
-                      ResultUtilsKt.completeWithError(
-                          callback, new Exception("Failed to read file: " + uri));
+                      // The failed batch is never returned to Dart, so release its earlier copies.
+                      for (FileResponse selected : files) {
+                        if (selected.getFileSelectorNativeException() == null) {
+                          File cachedFile = new File(selected.getPath());
+                          cachedFile.delete();
+                          cachedFile.getParentFile().delete();
+                        }
+                      }
+                      if (file != null) {
+                        // Preserve the structured native error without exposing discarded paths.
+                        ResultUtilsKt.completeWithValue(callback, Collections.singletonList(file));
+                      } else {
+                        ResultUtilsKt.completeWithError(
+                            callback, new Exception("Failed to read file: " + clipItem.getUri()));
+                      }
                       return;
                     }
                   }
@@ -349,15 +356,6 @@ public class FileSelectorApiImpl implements FileSelectorApi {
       return null;
     }
 
-    final byte[] bytes = new byte[size];
-    try (InputStream inputStream = contentResolver.openInputStream(uri)) {
-      final DataInputStream dataInputStream = objectFactory.newDataInputStream(inputStream);
-      dataInputStream.readFully(bytes);
-    } catch (IOException exception) {
-      Log.w(TAG, exception.getMessage());
-      return null;
-    }
-
     String uriPath;
     FileSelectorNativeException nativeError = null;
 
@@ -393,6 +391,8 @@ public class FileSelectorApiImpl implements FileSelectorApi {
       return null;
     }
 
-    return new FileResponse(uriPath, contentResolver.getType(uri), name, size, bytes, nativeError);
+    // FileUtils copies with a fixed-size buffer. Return metadata only: including
+    // file contents here also duplicates the whole file in the platform codec.
+    return new FileResponse(uriPath, contentResolver.getType(uri), name, size, nativeError);
   }
 }

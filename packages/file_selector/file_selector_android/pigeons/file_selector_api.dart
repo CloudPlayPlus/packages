@@ -30,7 +30,6 @@ class FileResponse {
   late final String? mimeType;
   late final String? name;
   late final int size;
-  late final Uint8List bytes;
   late final FileSelectorNativeException? fileSelectorNativeException;
 }
 
