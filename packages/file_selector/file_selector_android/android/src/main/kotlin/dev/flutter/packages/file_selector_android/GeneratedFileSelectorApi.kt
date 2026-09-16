@@ -251,7 +251,6 @@ data class FileResponse(
     val mimeType: String? = null,
     val name: String? = null,
     val size: Long,
-    val bytes: ByteArray,
     val fileSelectorNativeException: FileSelectorNativeException? = null
 ) {
   companion object {
@@ -260,9 +259,8 @@ data class FileResponse(
       val mimeType = pigeonVar_list[1] as String?
       val name = pigeonVar_list[2] as String?
       val size = pigeonVar_list[3] as Long
-      val bytes = pigeonVar_list[4] as ByteArray
-      val fileSelectorNativeException = pigeonVar_list[5] as FileSelectorNativeException?
-      return FileResponse(path, mimeType, name, size, bytes, fileSelectorNativeException)
+      val fileSelectorNativeException = pigeonVar_list[4] as FileSelectorNativeException?
+      return FileResponse(path, mimeType, name, size, fileSelectorNativeException)
     }
   }
 
@@ -272,7 +270,6 @@ data class FileResponse(
         mimeType,
         name,
         size,
-        bytes,
         fileSelectorNativeException,
     )
   }
@@ -289,7 +286,6 @@ data class FileResponse(
         GeneratedFileSelectorApiPigeonUtils.deepEquals(this.mimeType, other.mimeType) &&
         GeneratedFileSelectorApiPigeonUtils.deepEquals(this.name, other.name) &&
         GeneratedFileSelectorApiPigeonUtils.deepEquals(this.size, other.size) &&
-        GeneratedFileSelectorApiPigeonUtils.deepEquals(this.bytes, other.bytes) &&
         GeneratedFileSelectorApiPigeonUtils.deepEquals(
             this.fileSelectorNativeException, other.fileSelectorNativeException)
   }
@@ -300,7 +296,6 @@ data class FileResponse(
     result = 31 * result + GeneratedFileSelectorApiPigeonUtils.deepHash(this.mimeType)
     result = 31 * result + GeneratedFileSelectorApiPigeonUtils.deepHash(this.name)
     result = 31 * result + GeneratedFileSelectorApiPigeonUtils.deepHash(this.size)
-    result = 31 * result + GeneratedFileSelectorApiPigeonUtils.deepHash(this.bytes)
     result =
         31 * result + GeneratedFileSelectorApiPigeonUtils.deepHash(this.fileSelectorNativeException)
     return result

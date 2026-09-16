@@ -1,3 +1,10 @@
+## 0.5.2+10
+
+* Returns disk-backed files without loading selected file contents into memory or
+  sending them over the platform channel, fixing out-of-memory crashes with large files.
+* Retains explicit Kotlin plugin setup and Flutter 3.35/Dart 3.9 support for
+  CloudPlayPlus's pinned Flutter 3.41.6 toolchain.
+
 ## 0.5.2+9
 
 * Fixes a crash when a selected file cannot be copied to a readable location (for

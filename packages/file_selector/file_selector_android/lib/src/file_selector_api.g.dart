@@ -152,7 +152,6 @@ class FileResponse {
     this.mimeType,
     this.name,
     required this.size,
-    required this.bytes,
     this.fileSelectorNativeException,
   });
 
@@ -164,12 +163,10 @@ class FileResponse {
 
   int size;
 
-  Uint8List bytes;
-
   FileSelectorNativeException? fileSelectorNativeException;
 
   List<Object?> _toList() {
-    return <Object?>[path, mimeType, name, size, bytes, fileSelectorNativeException];
+    return <Object?>[path, mimeType, name, size, fileSelectorNativeException];
   }
 
   Object encode() {
@@ -183,8 +180,7 @@ class FileResponse {
       mimeType: result[1] as String?,
       name: result[2] as String?,
       size: result[3]! as int,
-      bytes: result[4]! as Uint8List,
-      fileSelectorNativeException: result[5] as FileSelectorNativeException?,
+      fileSelectorNativeException: result[4] as FileSelectorNativeException?,
     );
   }
 
@@ -201,7 +197,6 @@ class FileResponse {
         _deepEquals(mimeType, other.mimeType) &&
         _deepEquals(name, other.name) &&
         _deepEquals(size, other.size) &&
-        _deepEquals(bytes, other.bytes) &&
         _deepEquals(fileSelectorNativeException, other.fileSelectorNativeException);
   }
 

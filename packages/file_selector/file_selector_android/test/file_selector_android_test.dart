@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_selector_android/src/file_selector_android.dart';
@@ -19,11 +20,21 @@ void main() {
 
   late FileSelectorAndroid plugin;
   late MockFileSelectorApi mockApi;
+  late Directory cacheDirectory;
+  late File textFile;
+  late File imageFile;
 
-  setUp(() {
+  setUp(() async {
     mockApi = MockFileSelectorApi();
     plugin = FileSelectorAndroid(api: mockApi);
+    cacheDirectory = await Directory.systemTemp.createTemp('file_selector_test_');
+    textFile = await File('${cacheDirectory.path}/path.txt').writeAsBytes(List<int>.filled(30, 1));
+    imageFile = await File(
+      '${cacheDirectory.path}/image.jpg',
+    ).writeAsBytes(List<int>.filled(40, 2));
   });
+
+  tearDown(() => cacheDirectory.delete(recursive: true));
 
   test('registered instance', () {
     FileSelectorAndroid.registerWith();
@@ -49,13 +60,7 @@ void main() {
         ),
       ).thenAnswer(
         (_) => Future<FileResponse?>.value(
-          FileResponse(
-            path: 'some/path.txt',
-            size: 30,
-            bytes: Uint8List(0),
-            name: 'name',
-            mimeType: 'text/plain',
-          ),
+          FileResponse(path: textFile.path, size: 30, name: 'name', mimeType: 'text/plain'),
         ),
       );
 
@@ -68,14 +73,39 @@ void main() {
         initialDirectory: 'some/path/',
       );
 
-      expect(file?.path, 'some/path.txt');
+      expect(file?.path, textFile.path);
       expect(file?.mimeType, 'text/plain');
       expect(await file?.length(), 30);
-      expect(await file?.readAsBytes(), Uint8List(0));
+      expect(await file?.readAsBytes(), List<int>.filled(30, 1));
     });
   });
 
   group('openFiles', () {
+    test('streams a large selected file from its cached path', () async {
+      final Directory directory = await Directory.systemTemp.createTemp('file_selector_large_');
+      addTearDown(() => directory.delete(recursive: true));
+      final cached = File('${directory.path}/large.bin');
+      const int fileSize = 200 * 1024 * 1024;
+      final RandomAccessFile handle = await cached.open(mode: FileMode.write);
+      try {
+        await handle.writeFrom(<int>[1, 2, 3, 4]);
+        await handle.setPosition(fileSize - 1);
+        await handle.writeByte(5);
+      } finally {
+        await handle.close();
+      }
+      when(
+        mockApi.openFiles(any, any),
+      ).thenAnswer((_) async => <FileResponse>[FileResponse(path: cached.path, size: fileSize)]);
+
+      final XFile selected = (await plugin.openFiles()).single;
+      expect(await selected.length(), fileSize);
+      final Uint8List firstChunk = await selected.openRead().first;
+      expect(firstChunk.length, inInclusiveRange(4, 64 * 1024));
+      expect(firstChunk.take(4), <int>[1, 2, 3, 4]);
+      expect(await selected.openRead(fileSize - 1).expand((chunk) => chunk).toList(), <int>[5]);
+    });
+
     test('passes the accepted type groups correctly', () async {
       when(
         mockApi.openFiles(
@@ -94,14 +124,8 @@ void main() {
         ),
       ).thenAnswer(
         (_) => Future<List<FileResponse>>.value(<FileResponse>[
-          FileResponse(
-            path: 'some/path.txt',
-            size: 30,
-            bytes: Uint8List(0),
-            name: 'name',
-            mimeType: 'text/plain',
-          ),
-          FileResponse(path: 'other/dir.jpg', size: 40, bytes: Uint8List(0), mimeType: 'image/jpg'),
+          FileResponse(path: textFile.path, size: 30, name: 'name', mimeType: 'text/plain'),
+          FileResponse(path: imageFile.path, size: 40, mimeType: 'image/jpg'),
         ]),
       );
 
@@ -114,15 +138,15 @@ void main() {
         initialDirectory: 'some/path/',
       );
 
-      expect(files[0].path, 'some/path.txt');
+      expect(files[0].path, textFile.path);
       expect(files[0].mimeType, 'text/plain');
       expect(await files[0].length(), 30);
-      expect(await files[0].readAsBytes(), Uint8List(0));
+      expect(await files[0].readAsBytes(), List<int>.filled(30, 1));
 
-      expect(files[1].path, 'other/dir.jpg');
+      expect(files[1].path, imageFile.path);
       expect(files[1].mimeType, 'image/jpg');
       expect(await files[1].length(), 40);
-      expect(await files[1].readAsBytes(), Uint8List(0));
+      expect(await files[1].readAsBytes(), List<int>.filled(40, 2));
     });
   });
 
